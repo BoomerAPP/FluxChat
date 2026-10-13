@@ -572,29 +572,61 @@ function endCall() {
 $("chat-call")?.addEventListener("click", () => startCall(false));
 $("chat-video")?.addEventListener("click", () => startCall(true));
 
-// ========== INSTANT REACTION ==========
-function updateLocalReaction(msgId, emoji, userId) {
-  const arrays = [state.lastGlobalMsgs, state.lastDmMsgs];
-  for (const arr of arrays) {
-    if (!arr || !arr.length) continue;
-    for (let i = 0; i < arr.length; i++) {
-      const m = arr[i];
-      if (stableMsgId(m) !== msgId) continue;
-      if (!m.reactions) m.reactions = {};
-      if (!m.reactions[emoji]) m.reactions[emoji] = [];
-      const users = m.reactions[emoji];
-      const idx = users.indexOf(userId);
-      if (idx >= 0) {
-        users.splice(idx, 1);
-        if (users.length === 0) delete m.reactions[emoji];
-      } else {
-        users.push(userId);
-      }
-      return true;
-    }
+
+// ========== UPDATE DOM REACTION INSTAN (TANPA RENDER ULANG) ==========
+function updateReactionInDOM(msgId, emoji, userId) {
+  console.log("[DOM Update] msgId:", msgId, "emoji:", emoji);
+  
+  const wrapper = document.querySelector('[data-msg-id="' + msgId + '"]')?.closest(".msg-wrapper");
+  if (!wrapper) {
+    console.warn("[DOM Update] Wrapper gak ketemu untuk:", msgId);
+    return;
   }
-  return false;
+  
+  let rxContainer = wrapper.querySelector(".msg-reactions");
+  let existingChip = rxContainer?.querySelector('.reaction-chip[data-emoji="' + emoji + '"]');
+  
+  if (existingChip) {
+    const countEl = existingChip.querySelector(".count");
+    if (countEl) {
+      const currentCount = parseInt(countEl.textContent) || 0;
+      countEl.textContent = currentCount + 1;
+    }
+    existingChip.classList.add("mine");
+    console.log("[DOM Update] Chip existing di-increment");
+  } else {
+    if (!rxContainer) {
+      rxContainer = document.createElement("div");
+      rxContainer.className = "msg-reactions";
+      wrapper.appendChild(rxContainer);
+    }
+    
+    const chip = document.createElement("div");
+    chip.className = "reaction-chip mine";
+    chip.dataset.msg = msgId;
+    chip.dataset.emoji = emoji;
+    chip.innerHTML = '<span>' + emoji + '</span><span class="count">1</span>';
+    
+    chip.addEventListener("click", function(ev) {
+      ev.stopPropagation();
+      const chatType = state.currentChat === "global" ? "global" : "dm";
+      const roomId = chatType === "dm" ? getDMRoomId(state.user.uid, state.dmWithUid) : null;
+      updateLocalReaction(msgId, emoji, state.user.uid);
+      updateReactionInDOM(msgId, emoji, state.user.uid);
+      addMessageReaction(chatType, roomId, msgId, emoji, state.user.uid).catch(function(){});
+    });
+    
+    rxContainer.appendChild(chip);
+    console.log("[DOM Update] Chip baru dibikin");
+  }
+  
+  if (rxContainer) {
+    rxContainer.querySelectorAll(".reaction-chip").forEach(function(chip) {
+      if (chip.dataset.emoji === emoji) chip.classList.add("mine");
+    });
+  }
 }
+
 
 // ========== REACTION RENDER ==========
 function renderReactionsHTML(msgId, msgData) {
@@ -875,74 +907,34 @@ function showReactionPicker(bubbleEl, msgId, msgData) {
   console.log("[Reaction] Binding " + buttons.length + " buttons for " + msgId);
 
   buttons.forEach(function(btn) {
-    btn.onclick = function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      const emoji = btn.dataset.emoji;
-      if (!emoji || !currentReactionTarget || !state.user) return;
-      console.log("[Reaction] Klik:", emoji, "→ target:", currentReactionTarget);
-      
-      const chatType = state.currentChat === "global" ? "global" : "dm";
-      const roomId = chatType === "dm" ? getDMRoomId(state.user.uid, state.dmWithUid) : null;
-      const targetId = currentReactionTarget;
-      const userId = state.user.uid;
-      
-      // 1. Update UI lokal INSTAN
-      updateLocalReaction(targetId, emoji, userId);
-      
-      // 2. Render ulang
-      setTimeout(function() { refreshCurrentChat(); }, 50);
-      
-      // 3. Kirim ke Firestore background
-      addMessageReaction(chatType, roomId, targetId, emoji, userId)
-        .then(function() { console.log("[Reaction] ✅ Saved"); })
-        .catch(function(err) { console.error("[Reaction] ❌", err); });
-      
-      // 4. Tutup picker
-      hideReactionPicker();
-      showToast("Reaction " + emoji + " dikirim");
-    };
-  });
-
-  const rect = bubbleEl.getBoundingClientRect();
-  const pickerW = 300;
-  const pickerH = 64;
-  let left = rect.left + rect.width / 2 - pickerW / 2;
-  let top = rect.top - pickerH - 14;
-  if (left < 10) left = 10;
-  if (left + pickerW > window.innerWidth - 10) left = window.innerWidth - pickerW - 10;
-  if (top < 70) top = rect.bottom + 14;
-  picker.style.left = left + "px";
-  picker.style.top = top + "px";
-  picker.style.width = pickerW + "px";
-
-  showMessageToolbar(msgData);
-}
-
-function hideReactionPicker() {
-  const picker = $("reaction-picker");
-  if (picker) {
-    picker.classList.add("hidden");
-    picker.style.display = "";
-    picker.style.left = "";
-    picker.style.top = "";
-    picker.style.width = "";
-    picker.style.zIndex = "";
-    picker.style.pointerEvents = "";
-  }
-  if (_reactionBackdrop) { _reactionBackdrop.remove(); _reactionBackdrop = null; }
-  currentReactionTarget = null;
-  currentSelectedMsg = null;
-  const toolbar = document.getElementById("action-header");
-  if (toolbar) toolbar.remove();
-  const header = document.querySelector(".chat-detail-header");
-  if (header) {
-    Array.from(header.children).forEach(function(child) {
-      if (child.id !== "action-header") child.style.visibility = "";
-    });
-  }
-}
-
+  btn.onclick = function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const emoji = btn.dataset.emoji;
+    if (!emoji || !currentReactionTarget || !state.user) return;
+    console.log("[Reaction] Klik:", emoji, "→ target:", currentReactionTarget);
+    
+    const chatType = state.currentChat === "global" ? "global" : "dm";
+    const roomId = chatType === "dm" ? getDMRoomId(state.user.uid, state.dmWithUid) : null;
+    const targetId = currentReactionTarget;
+    const userId = state.user.uid;
+    
+    // 1. Update state lokal
+    updateLocalReaction(targetId, emoji, userId);
+    
+    // 2. ⚡ UPDATE DOM LANGSUNG (instan, tanpa render ulang)
+    updateReactionInDOM(targetId, emoji, userId);
+    
+    // 3. Kirim ke Firestore background
+    addMessageReaction(chatType, roomId, targetId, emoji, userId)
+      .then(function() { console.log("[Reaction] ✅ Saved"); })
+      .catch(function(err) { console.error("[Reaction] ❌", err); });
+    
+    // 4. Tutup picker
+    hideReactionPicker();
+    showToast("Reaction " + emoji + " dikirim");
+  };
+});
 // ========== MESSAGE TOOLBAR (FULL WORKING) ==========
 function showMessageToolbar(msg) {
   const header = document.querySelector(".chat-detail-header");
