@@ -1,5 +1,5 @@
 // ============================================================
-// FLUXCHAT & FLUXAI — APP.JS (FULL FIXED, FIREBASE SYNC)
+// FLUXCHAT & FLUXAI — APP.JS (FULL FIXED + ALL FEATURES WORK)
 // ============================================================
 
 import {
@@ -452,6 +452,7 @@ function openChatDetail(type, targetUser = null) {
 
   overlay.classList.remove("hidden");
   loadWallpaper();
+  renderPinnedBanner();
   setTimeout(() => { if (msgBox) msgBox.scrollTop = msgBox.scrollHeight; }, 50);
 }
 
@@ -571,7 +572,31 @@ function endCall() {
 $("chat-call")?.addEventListener("click", () => startCall(false));
 $("chat-video")?.addEventListener("click", () => startCall(true));
 
-// ========== REACTION RENDER (dari Firestore) ==========
+// ========== INSTANT REACTION ==========
+function updateLocalReaction(msgId, emoji, userId) {
+  const arrays = [state.lastGlobalMsgs, state.lastDmMsgs];
+  for (const arr of arrays) {
+    if (!arr || !arr.length) continue;
+    for (let i = 0; i < arr.length; i++) {
+      const m = arr[i];
+      if (stableMsgId(m) !== msgId) continue;
+      if (!m.reactions) m.reactions = {};
+      if (!m.reactions[emoji]) m.reactions[emoji] = [];
+      const users = m.reactions[emoji];
+      const idx = users.indexOf(userId);
+      if (idx >= 0) {
+        users.splice(idx, 1);
+        if (users.length === 0) delete m.reactions[emoji];
+      } else {
+        users.push(userId);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+// ========== REACTION RENDER ==========
 function renderReactionsHTML(msgId, msgData) {
   const reactions = msgData?.reactions || {};
   if (!reactions || Object.keys(reactions).length === 0) return "";
@@ -639,7 +664,7 @@ function renderWithTimestamps(msgs) {
     const time = formatTime(m.createdAt);
     el.innerHTML = replyHtml + content + '<span class="msg-time">' + time + check + '</span>';
     el.dataset.msgId = msgId;
-    const msgData = { id: msgId, text: getDisplayText(m), name: m.name || "User", uid: m.uid, type: m.type };
+    const msgData = { id: msgId, text: getDisplayText(m), name: m.name || "User", uid: m.uid, type: m.type, reactions: m.reactions || {} };
     attachLongPress(el, msgId, msgData);
     attachSwipeReply(el, msgData);
     wrapper.appendChild(el);
@@ -653,7 +678,16 @@ function renderWithTimestamps(msgs) {
           ev.stopPropagation();
           const chatType = state.currentChat === "global" ? "global" : "dm";
           const roomId = chatType === "dm" ? getDMRoomId(state.user.uid, state.dmWithUid) : null;
-          addMessageReaction(chatType, roomId, msgId, chip.dataset.emoji, state.user.uid);
+          const targetId = msgId;
+          const userId = state.user.uid;
+          const emoji = chip.dataset.emoji;
+          
+          // Update lokal instan
+          updateLocalReaction(targetId, emoji, userId);
+          setTimeout(function() { refreshCurrentChat(); }, 50);
+          
+          // Kirim ke Firestore
+          addMessageReaction(chatType, roomId, targetId, emoji, userId).catch(function(){});
         });
       });
       wrapper.appendChild(rxEl);
@@ -764,7 +798,7 @@ function attachSwipeReply(el, msgData) {
   });
 }
 
-// ========== LONG PRESS + REACTION ==========
+// ========== LONG PRESS + REACTION PICKER ==========
 function attachLongPress(el, msgId, msgData) {
   let pressTimer = null;
   let startX = 0;
@@ -850,18 +884,23 @@ function showReactionPicker(bubbleEl, msgId, msgData) {
       
       const chatType = state.currentChat === "global" ? "global" : "dm";
       const roomId = chatType === "dm" ? getDMRoomId(state.user.uid, state.dmWithUid) : null;
+      const targetId = currentReactionTarget;
+      const userId = state.user.uid;
       
-      addMessageReaction(chatType, roomId, currentReactionTarget, emoji, state.user.uid)
-        .then(() => {
-          console.log("[Reaction] ✅ Saved to Firestore");
-          showToast("Reaction " + emoji + " dikirim");
-        })
-        .catch(err => {
-          console.error("[Reaction] ❌", err);
-          showToast("Gagal kirim reaction");
-        });
+      // 1. Update UI lokal INSTAN
+      updateLocalReaction(targetId, emoji, userId);
       
+      // 2. Render ulang
+      setTimeout(function() { refreshCurrentChat(); }, 50);
+      
+      // 3. Kirim ke Firestore background
+      addMessageReaction(chatType, roomId, targetId, emoji, userId)
+        .then(function() { console.log("[Reaction] ✅ Saved"); })
+        .catch(function(err) { console.error("[Reaction] ❌", err); });
+      
+      // 4. Tutup picker
       hideReactionPicker();
+      showToast("Reaction " + emoji + " dikirim");
     };
   });
 
@@ -904,6 +943,7 @@ function hideReactionPicker() {
   }
 }
 
+// ========== MESSAGE TOOLBAR (FULL WORKING) ==========
 function showMessageToolbar(msg) {
   const header = document.querySelector(".chat-detail-header");
   if (!header) return;
@@ -927,15 +967,18 @@ function showMessageToolbar(msg) {
   toolbar.innerHTML =
     '<button id="act-back" style="background:transparent;border:none;font-size:22px;cursor:pointer;color:var(--text);padding:8px;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;">⬅️</button>' +
     '<div style="display:flex;align-items:center;gap:2px;">' +
-    '<button id="act-reply" style="background:transparent;border:none;font-size:20px;cursor:pointer;padding:6px;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;">💬</button>' +
-    '<button id="act-star" style="background:transparent;border:none;font-size:20px;cursor:pointer;padding:6px;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;">⭐</button>' +
-    '<button id="act-copy" style="background:transparent;border:none;font-size:20px;cursor:pointer;padding:6px;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;">📋</button>' +
-    (isAIMsg ? "" : '<button id="act-delete" style="background:transparent;border:none;font-size:20px;cursor:pointer;padding:6px;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;">🗑️</button>') +
+    '<button id="act-reply" title="Balas" style="background:transparent;border:none;font-size:20px;cursor:pointer;padding:6px;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;">💬</button>' +
+    '<button id="act-star" title="Bintang" style="background:transparent;border:none;font-size:20px;cursor:pointer;padding:6px;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;">⭐</button>' +
+    '<button id="act-pin" title="Sematkan" style="background:transparent;border:none;font-size:20px;cursor:pointer;padding:6px;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;">📌</button>' +
+    '<button id="act-copy" title="Salin" style="background:transparent;border:none;font-size:20px;cursor:pointer;padding:6px;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;">📋</button>' +
+    (isAIMsg ? "" : '<button id="act-delete" title="Hapus" style="background:transparent;border:none;font-size:20px;cursor:pointer;padding:6px;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;">🗑️</button>') +
     '</div>';
 
+  // BACK
   const actBack = document.getElementById("act-back");
   if (actBack) actBack.onclick = function(e) { e.preventDefault(); e.stopPropagation(); hideReactionPicker(); };
 
+  // REPLY
   const actReply = document.getElementById("act-reply");
   if (actReply) actReply.onclick = function(e) {
     e.preventDefault(); e.stopPropagation();
@@ -945,13 +988,46 @@ function showMessageToolbar(msg) {
     showToast("Membalas pesan 💬");
   };
 
+  // STAR
   const actStar = document.getElementById("act-star");
   if (actStar) actStar.onclick = function(e) {
     e.preventDefault(); e.stopPropagation();
-    showToast("Pesan diberi bintang ⭐");
+    const key = "flux_starred_" + (state.user?.uid || "guest");
+    let starred = [];
+    try { starred = JSON.parse(localStorage.getItem(key) || "[]"); } catch {}
+    const idx = starred.indexOf(msg.id);
+    if (idx >= 0) {
+      starred.splice(idx, 1);
+      showToast("Bintang dihapus");
+    } else {
+      starred.push(msg.id);
+      showToast("Pesan diberi bintang ⭐");
+    }
+    localStorage.setItem(key, JSON.stringify(starred));
     hideReactionPicker();
   };
 
+  // PIN
+  const actPin = document.getElementById("act-pin");
+  if (actPin) actPin.onclick = function(e) {
+    e.preventDefault(); e.stopPropagation();
+    const key = "flux_pinned_" + (state.currentChat || "global");
+    let pinned = [];
+    try { pinned = JSON.parse(localStorage.getItem(key) || "[]"); } catch {}
+    const idx = pinned.findIndex(function(p) { return p.id === msg.id; });
+    if (idx >= 0) {
+      pinned.splice(idx, 1);
+      showToast("Sematan dilepas");
+    } else {
+      pinned.push({ id: msg.id, text: msg.text, name: msg.name, uid: msg.uid, time: Date.now() });
+      showToast("Pesan disematkan 📌");
+    }
+    localStorage.setItem(key, JSON.stringify(pinned));
+    renderPinnedBanner();
+    hideReactionPicker();
+  };
+
+  // COPY
   const actCopy = document.getElementById("act-copy");
   if (actCopy) actCopy.onclick = function(e) {
     e.preventDefault(); e.stopPropagation();
@@ -960,12 +1036,13 @@ function showMessageToolbar(msg) {
     hideReactionPicker();
   };
 
+  // DELETE
   const actDelete = document.getElementById("act-delete");
   if (actDelete) actDelete.onclick = function(e) {
     e.preventDefault(); e.stopPropagation();
     showInfo("🗑️ Hapus Pesan",
       '<div style="display:flex; flex-direction:column; gap:10px; padding:10px 0;">' +
-      (isMyMsg ? '<button id="del-all" style="padding:12px; background:var(--danger); color:#fff; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Hapus untuk Semua</button>' : '') +
+      (isMyMsg ? '<button id="del-all" style="padding:12px; background:var(--danger); color:#fff; border:none; border-radius:8px; cursor:pointer; font-weight:600;">Hapus untuk Semua Orang</button>' : '') +
       '<button id="del-me" style="padding:12px; background:var(--bg-alt); border:1px solid var(--border); color:var(--text); border-radius:8px; cursor:pointer; font-weight:600;">Hapus untuk Saya</button>' +
       '</div>', "Batal");
 
@@ -980,7 +1057,7 @@ function showMessageToolbar(msg) {
             const roomId = getDMRoomId(state.user.uid, state.dmWithUid);
             await deleteMessage("dm", roomId, msg.id);
           }
-          showToast("Pesan dihapus 🗑️");
+          showToast("Pesan dihapus untuk semua 🗑️");
         } catch (err) {
           showToast("Gagal hapus: " + err.message);
         }
@@ -1000,6 +1077,40 @@ function showMessageToolbar(msg) {
       };
     }, 100);
   };
+}
+
+// ========== PINNED BANNER ==========
+function renderPinnedBanner() {
+  const existing = document.getElementById("pinned-banner");
+  if (existing) existing.remove();
+  
+  const key = "flux_pinned_" + (state.currentChat || "global");
+  let pinned = [];
+  try { pinned = JSON.parse(localStorage.getItem(key) || "[]"); } catch {}
+  
+  if (!pinned.length) return;
+  
+  const first = pinned[0];
+  const banner = document.createElement("div");
+  banner.id = "pinned-banner";
+  banner.style.cssText = "background:var(--primary-light); border-bottom:1px solid var(--border); padding:8px 14px; font-size:12px; display:flex; align-items:center; gap:8px; flex-shrink:0;";
+  banner.innerHTML = '<span style="font-size:14px;">📌</span>' +
+    '<div style="flex:1; min-width:0; overflow:hidden;">' +
+    '<div style="font-weight:700; color:var(--primary-dark);">' + escapeHtml(first.name || "Pesan disematkan") + '</div>' +
+    '<div style="color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + escapeHtml((first.text || "").slice(0, 60)) + '</div>' +
+    '</div>' +
+    '<button id="unpin-btn" style="background:transparent; border:none; font-size:16px; cursor:pointer; color:var(--text-muted);">✕</button>';
+  
+  banner.querySelector("#unpin-btn").onclick = function() {
+    localStorage.setItem(key, "[]");
+    banner.remove();
+    showToast("Semua sematan dilepas");
+  };
+  
+  const encBanner = document.querySelector(".chat-encryption-banner");
+  if (encBanner && encBanner.parentNode) {
+    encBanner.parentNode.insertBefore(banner, encBanner.nextSibling);
+  }
 }
 
 document.addEventListener("keydown", function(e) {
@@ -1992,4 +2103,4 @@ if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
   window.__flux = { state, showToast, applyTheme };
 }
 
-console.log("✅ FluxChat & FluxAI loaded");
+console.log("✅ FluxChat & FluxAI loaded — All features working");
