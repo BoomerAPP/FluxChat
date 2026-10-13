@@ -2099,8 +2099,7 @@ $("fr-search-input")?.addEventListener("input", (e) => {
 });
 
 // ========== DEBUG ==========
-if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
-  window.__flux = { state, showToast, applyTheme };
-}
+// Selalu set __flux biar bisa debug dari Console (Vercel, Netlify, dll)
+window.__flux = { state, showToast, applyTheme };
 
 console.log("✅ FluxChat & FluxAI loaded — All features working");
