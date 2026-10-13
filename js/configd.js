@@ -1,5 +1,5 @@
 // ============================================================
-// FLUXCHAT & FLUXAI — CONFIG (Placeholder for GitHub)
+// FLUXCHAT & FLUXAI — CONFIG (ASLI — JANGAN PUSH KE GITHUB)
 // ============================================================
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -17,9 +17,8 @@ export const FIREBASE_CONFIG = {
 export const app = initializeApp(FIREBASE_CONFIG);
 export const firebaseApp = app;
 
-// PLACEHOLDER — bakal di-replace oleh GitHub Actions
-// Di file ASLI (config.real.js), ini isinya key OpenRouter lu.
-export const GEMINI_API_KEY = "REPLACE_ME_WITH_YOUR_OPENROUTER_KEY";
+// KEY ASLI — INI YANG JANGAN SAMPE KE GITHUB
+export const GEMINI_API_KEY = "sk-or-v1-a696c6dde27e6a494a12cd7c6f8379f1d5ef379f1d5ef5e586a2f3ec828fa449490fbac15";
 
 export const GEMINI_MODEL = "nvidia/nemotron-3.5-lightning:free";
 
